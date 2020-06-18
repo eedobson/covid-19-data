@@ -1,0 +1,105 @@
+---
+title: "COVID-19 in Cook County"
+author: "Emily Dobson"
+date: "5/10/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+library(tidyverse)
+library(scales)
+```
+
+## COVID-19 in Cook County, Illinois
+
+This document draws upon data from the New York Times on COVID-19 cases and deaths. The source data is publicly available [on GitHub](https://github.com/nytimes/covid-19-data). The NYT provides counts of total cases and deaths to date for every county in the United States. For the visualization I would like to construct, I will need data on _new cases by day_ for Cook County, Illinois. 
+
+## Data Transformations
+
+```{r message==FALSE}
+nyt <- read_csv("us-counties.csv")
+```
+
+In the first section of this code, I `mutate()` the data into a more usable format. First, I filter the data to only include rows with information for Cook County, IL. Next, I format the date to be in a more easily readable format. I also calculate the growth rate of total COVID cases along with the number of new cases and deaths reported each day. 
+
+```{r}
+cook_cnty <- nyt %>%
+  filter(state == "Illinois", county == "Cook") %>%
+  complete(date) %>%
+  mutate(date = format(date, "%m-%d"), 
+         cases_pct_increase = ((cases - lag(cases))/lag(cases))*100, 
+         deaths_pct_increase = ((deaths - lag(deaths))/lag(deaths))*100, 
+         new_cases = cases - lag(cases), 
+         new_deaths = deaths - lag(deaths))
+
+```
+
+Once these transformations have been performed, a few rows have unusual values because of my use of the `lag()` function and division by zero. My next step is to clean up these values. 
+
+```{r}
+filter(cook_cnty, is.na(cases_pct_increase))
+
+filter(cook_cnty, is.na(new_cases))
+```
+
+The only `NA` values in the `cases_pct_increase` and `new_cases` columns are found in the first row. I repopulate these `NA` values with values of 100 and 1, respectively, since only one case was reported on January 24th and this case represents a 100% increase over the previous day. 
+
+```{r}
+cook_cnty <- cook_cnty %>%
+  mutate(cases_pct_increase = replace(cases_pct_increase,
+                                      which(is.na(cases_pct_increase)), 100),
+         new_cases = replace(new_cases, which(is.na(new_cases)), 1))
+
+filter(cook_cnty, is.na(deaths_pct_increase))
+
+filter(cook_cnty, is.na(new_deaths))
+```
+
+Similarly, the first row contains an `NA` value in the `new_deaths` column, and there are 53 rows with `NA` values in the `deaths_pct_increase` column. These `NA` values are the result of division by zero, so to clean the data, I replace them with 0.  
+
+```{r}
+cook_cnty <- cook_cnty %>%
+  mutate(deaths_pct_increase = 
+           replace(deaths_pct_increase, which(
+             is.na(deaths_pct_increase)), 0))
+
+filter(cook_cnty, deaths_pct_increase == "Inf")
+```
+
+Finally, on the first day with an observed COVID death in Cook County, the `deaths_pct_increase` column populated with a value of infinity. While technically correct, I modify this value to 100%.  
+
+```{r}
+cook_cnty <- cook_cnty %>%
+  mutate(deaths_pct_increase = 
+           replace(deaths_pct_increase, which(
+             deaths_pct_increase == "Inf"), 100))
+
+cook_cnty <- cook_cnty %>%
+  mutate(new_cases_per_100 = 
+           new_cases/100)
+```
+
+
+
+## Data Visualization
+
+Now that the data is both cleaned and in the desired format, I create a simple data visualization of new COVID-19 cases and deaths by day from the first observed case in Cook County on January 24th to present. Each bar's height represents the number of new cases reported that day, while its color displays the number of new deaths reported. The dotted vertical line indicates March 21st, the date Illinois' state-wide shelter-in-place order went into effect. The increasing red line shows the total number of deaths to date. 
+
+```{r}
+ggplot(cook_cnty) + 
+  geom_bar(mapping = aes(x = date, y = new_cases, 
+                         fill = new_deaths), stat = "identity") + 
+   geom_line(mapping = aes(x = date, y = deaths), 
+             color = "red", group = 1) + 
+  geom_vline(xintercept = "03-21", linetype = 2, color = "red") + 
+  scale_x_discrete(breaks = c("01-24", "03-01", "04-01", "05-01")) +
+  labs(title = "Daily COVID-19 Cases and Deaths in Cook County", 
+       x = "Date", 
+       y = "New Cases per Day", 
+       fill = "New Deaths per Day") + 
+  annotate(geom = "text", x = "02-28", y = 1500, 
+           label = "March 21 State-Wide\n Shelter in Place Order") + 
+  annotate(geom = "text", x = "04-27", y = 2300, label = "Total Deaths") +
+  theme_minimal()
+```
+
